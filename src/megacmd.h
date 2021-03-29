@@ -41,6 +41,15 @@ using std::exception;
 #include "megaapi_impl.h"
 
 #define PROGRESS_COMPLETE -2
+namespace megacmd {
+
+// Events
+const int MCMD_EVENT_UPDATE_ID = 98900;
+const char MCMD_EVENT_UPDATE_MESSAGE[] = "MEGAcmd update";
+const int MCMD_EVENT_UPDATE_START_ID = 98901;
+const char MCMD_EVENT_UPDATE_START_MESSAGE[] = "MEGAcmd auto-update start";
+const int MCMD_EVENT_UPDATE_RESTART_ID = 98902;
+const char MCMD_EVENT_UPDATE_RESTART_MESSAGE[] = "MEGAcmd updated requiring restart";
 
 typedef struct sync_struct
 {
@@ -110,7 +119,42 @@ enum confirmresponse
 void changeprompt(const char *newprompt);
 
 void informStateListener(std::string message, int clientID);
-void broadcastMessage(std::string message);
+void broadcastMessage(std::string message, bool keepIfNoListeners = false);
+void informStateListeners(std::string s);
+
+void appendGreetingStatusFirstListener(const std::string &msj);
+void removeGreetingStatusFirstListener(const std::string &msj);
+void appendGreetingStatusAllListener(const std::string &msj);
+void removeGreetingStatusAllListener(const std::string &msj);
+
+
+void setloginInAtStartup(bool value);
+void setBlocked(int value);
+int getBlocked();
+void unblock();
+bool getloginInAtStartup();
+void updatevalidCommands();
+void reset();
+
+/**
+ * @brief A class to ensure clients are properly informed of login in situations
+ */
+class LoginGuard {
+public:
+    LoginGuard()
+    {
+        appendGreetingStatusAllListener(std::string("login:"));
+        setloginInAtStartup(true);
+    }
+
+    ~LoginGuard()
+    {
+        removeGreetingStatusAllListener(std::string("login:"));
+        informStateListeners("loged:"); //send this even when failed!
+        setloginInAtStartup(false);
+    }
+};
+
 
 mega::MegaApi* getFreeApiFolder();
 void freeApiFolder(mega::MegaApi *apiFolder);
@@ -140,6 +184,5 @@ void informStateListenerByClientId(int clientID, std::string s);
 
 void informProgressUpdate(long long transferred, long long total, int clientID, std::string title = "");
 
-
-
+}//end namespace
 #endif

@@ -20,6 +20,7 @@
 
 m4_include([sdk/m4/ax_check_compile_flag.m4])
 m4_include([sdk/m4/ax_check_link_flag.m4])
+m4_include([sdk/m4/ax_cxx_compile_stdcxx.m4])
 
 m4_define([megacmd_major_version], [$(cat src/megacmdversion.h | grep "define MEGACMD_MAJOR" | cut -d" " -f 3)])
 m4_define([megacmd_minor_version], [$(cat src/megacmdversion.h | grep "define MEGACMD_MINOR" | cut -d" " -f 3)])
@@ -102,6 +103,9 @@ AM_CONDITIONAL(CPPCHECK, test -n "$HAVE_CPPCHECK")
 
 # set C++
 AC_LANG_CPLUSPLUS
+
+# Check for C++11 standard
+AX_CXX_COMPILE_STDCXX([11], [noext], [mandatory], [default])
 
 # Check headers
 AC_STDC_HEADERS
@@ -364,7 +368,8 @@ AC_ARG_WITH(readline,
     SAVE_LIBS=$LIBS
     LIBS="$TERMCAP_LIBS $LIBS"
     AC_CHECK_LIB([readline], [rl_save_prompt], [RL_LIBS="-lreadline"], [
-        AC_MSG_ERROR([readline library is required for the sample client.])])
+        AC_MSG_ERROR([readline library is required for the sample client.])],
+        [$LIBS])
     LIBS=$SAVE_LIBS
      ;;
    *)

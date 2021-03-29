@@ -22,14 +22,18 @@
 #include "megacmdlogger.h"
 #include "megacmdsandbox.h"
 
+namespace megacmd {
+class MegaCmdSandbox;
+
 class MegaCmdListener : public mega::SynchronousRequestListener
 {
 private:
     float percentFetchnodes;
     bool alreadyFinished;
-    int clientID;
 
 public:
+    int clientID;
+
     MegaCmdListener(mega::MegaApi *megaApi, mega::MegaRequestListener *listener = NULL, int clientID=-1);
     virtual ~MegaCmdListener();
 
@@ -43,6 +47,45 @@ protected:
     mega::MegaRequestListener *listener;
 };
 
+
+/**
+ * @brief The MegaCmdListenerFuncExecuter class
+ *
+ * it takes an std::function as parameter that will be called upon request finish.
+ *
+ */
+class MegaCmdListenerFuncExecuter : public mega::MegaRequestListener
+{
+private:
+    std::function<void(mega::MegaApi* api, mega::MegaRequest *request, mega::MegaError *e)> onRequestFinishCallback;
+    bool mAutoremove = true;
+
+public:
+
+    /**
+     * @brief MegaCmdListenerFuncExecuter
+     * @param func to call upon onRequestFinish
+     * @param autoremove whether this should be deleted after func is called
+     */
+    MegaCmdListenerFuncExecuter(std::function<void(mega::MegaApi* api, mega::MegaRequest *request, mega::MegaError *e)> func, bool autoremove = false)
+    {
+        onRequestFinishCallback = std::move(func);
+        mAutoremove = autoremove;
+    }
+
+    void onRequestFinish(mega::MegaApi *api, mega::MegaRequest *request, mega::MegaError *e)
+    {
+        onRequestFinishCallback(api, request, e);
+
+        if (mAutoremove)
+        {
+            delete this;
+        }
+    }
+    virtual void onRequestStart(mega::MegaApi* api, mega::MegaRequest *request) {}
+    virtual void onRequestUpdate(mega::MegaApi* api, mega::MegaRequest *request) {}
+    virtual void onRequestTemporaryError(mega::MegaApi *api, mega::MegaRequest *request, mega::MegaError* e) {}
+};
 
 class MegaCmdTransferListener : public mega::SynchronousTransferListener
 {
@@ -132,6 +175,8 @@ private:
     MegaCMDLogger *loggerCMD;
     MegaCmdSandbox *sandboxCMD;
 
+    std::atomic_bool ongoing;
+
 public:
     MegaCmdGlobalListener(MegaCMDLogger *logger, MegaCmdSandbox *sandboxCMD);
     void onNodesUpdate(mega::MegaApi* api, mega::MegaNodeList *nodes);
@@ -178,7 +223,7 @@ private:
     static const int MAXCOMPLETEDTRANSFERSBUFFER;
 
 public:
-    mega::MegaMutex completedTransfersMutex;
+    std::mutex completedTransfersMutex;
     std::deque<mega::MegaTransfer *> completedTransfers;
     std::map<mega::MegaHandle,std::string> completedPathsByHandle;
 public:
@@ -199,5 +244,5 @@ protected:
     mega::MegaTransferListener *listener;
 };
 
-
+} //end namespace
 #endif // LISTENERS_H

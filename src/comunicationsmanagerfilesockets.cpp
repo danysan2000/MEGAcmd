@@ -16,6 +16,8 @@
  * program.
  */
 
+#ifndef WIN32
+
 #include "comunicationsmanagerfilesockets.h"
 #include "megacmdutils.h"
 #include <sys/ioctl.h>
@@ -29,14 +31,12 @@
 #endif
 
 using namespace mega;
-using namespace std;
 
+namespace megacmd {
 int ComunicationsManagerFileSockets::get_next_comm_id()
 {
-    mtx->lock();
-    ++count;
-    mtx->unlock();
-    return count;
+    std::lock_guard<std::mutex> g(informerMutex);
+    return ++count;
 }
 
 int ComunicationsManagerFileSockets::create_new_socket(int *sockId)
@@ -134,26 +134,22 @@ int ComunicationsManagerFileSockets::create_new_socket(int *sockId)
 ComunicationsManagerFileSockets::ComunicationsManagerFileSockets()
 {
     count = 0;
-    mtx = new MegaMutex();
-    informerMutex = new MegaMutex(false);
     initialize();
 }
 
 int ComunicationsManagerFileSockets::initialize()
 {
-    mtx->init(false);
-
     MegaFileSystemAccess *fsAccess = new MegaFileSystemAccess();
     char csocketsFolder[34]; // enough to hold all numbers up to 64-bits
     sprintf(csocketsFolder, "/tmp/megaCMD_%d", getuid());
-    string socketsFolder = csocketsFolder;
+    LocalPath socketsFolder = LocalPath::fromLocalname(csocketsFolder);
 
     fsAccess->setdefaultfolderpermissions(0700);
-    fsAccess->rmdirlocal(&socketsFolder);
-    LOG_debug << "CREATING sockets folder: " << socketsFolder << "!!!";
-    if (!fsAccess->mkdirlocal(&socketsFolder, false))
+    fsAccess->rmdirlocal(socketsFolder);
+    LOG_debug << "CREATING sockets folder: " << socketsFolder.toPath(*fsAccess) << "!!!";
+    if (!fsAccess->mkdirlocal(socketsFolder, false))
     {
-        LOG_fatal << "ERROR CREATING sockets folder: " << socketsFolder << ": " << errno;
+        LOG_fatal << "ERROR CREATING sockets folder: " << socketsFolder.toPath(*fsAccess) << ": " << errno;
     }
     delete fsAccess;
 
@@ -297,7 +293,7 @@ void ComunicationsManagerFileSockets::registerStateListener(CmdPetition *inf)
  */
 void ComunicationsManagerFileSockets::returnAndClosePetition(CmdPetition *inf, OUTSTRINGSTREAM *s, int outCode)
 {
-    LOG_verbose << "Output to write in socket " << ((CmdPetitionPosixSockets *)inf)->outSocket << ": <<" << s->str() << ">>";
+    LOG_verbose << "Output to write in socket " << ((CmdPetitionPosixSockets *)inf)->outSocket;
     sockaddr_in cliAddr;
     socklen_t cliLength = sizeof( cliAddr );
     int connectedsocket = ((CmdPetitionPosixSockets *)inf)->acceptedOutSocket;
@@ -394,7 +390,7 @@ void ComunicationsManagerFileSockets::sendPartialOutput(CmdPetition *inf, OUTSTR
 
 int ComunicationsManagerFileSockets::informStateListener(CmdPetition *inf, string &s)
 {
-    MutexGuard g(*informerMutex);
+    std::lock_guard<std::mutex> g(informerMutex);
     LOG_verbose << "Inform State Listener: Output to write in socket " << ((CmdPetitionPosixSockets *)inf)->outSocket << ": <<" << s << ">>";
 
     sockaddr_in cliAddr;
@@ -445,7 +441,7 @@ int ComunicationsManagerFileSockets::informStateListener(CmdPetition *inf, strin
     {
         if (errno == 32) //socket closed
         {
-            LOG_debug << "Unregistering no longer listening client. Original petition: " << *inf;
+            LOG_debug << "Unregistering no longer listening client. Original petition: " << inf->line;
             connectedsockets.erase(((CmdPetitionPosixSockets *)inf)->outSocket);
             return -1;
         }
@@ -465,7 +461,7 @@ int ComunicationsManagerFileSockets::informStateListener(CmdPetition *inf, strin
     {
         if (errno == 32) //socket closed
         {
-            LOG_debug << "Unregistering no longer listening client. Original petition: " << *inf;
+            LOG_debug << "Unregistering no longer listening client. Original petition: " << inf->line;
             close(connectedsocket);
             connectedsockets.erase(((CmdPetitionPosixSockets *)inf)->outSocket);
             return -1;
@@ -665,6 +661,7 @@ string ComunicationsManagerFileSockets::get_petition_details(CmdPetition *inf)
 
 ComunicationsManagerFileSockets::~ComunicationsManagerFileSockets()
 {
-    delete mtx;
-    delete informerMutex;
 }
+}//end namespace
+
+#endif

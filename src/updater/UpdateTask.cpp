@@ -33,6 +33,10 @@
 using std::string;
 using CryptoPP::Integer;
 
+using std::cout;
+using std::endl;
+using std::vector;
+
 enum {
     LOG_LEVEL_FATAL = 0,   // Very severe error event that will presumably lead the application to abort.
     LOG_LEVEL_ERROR,   // Error information but will continue application to keep running.
@@ -318,7 +322,12 @@ int mkdir_p(const char *path)
 UpdateTask::UpdateTask()
 {
     isPublic = false;
-    signatureChecker = new SignatureChecker((const char *)UPDATE_PUBLIC_KEY);
+    string updatePublicKey = UPDATE_PUBLIC_KEY;
+    if (getenv("MEGA_UPDATE_PUBLIC_KEY"))
+    {
+        updatePublicKey = getenv("MEGA_UPDATE_PUBLIC_KEY");
+    }
+    signatureChecker = new SignatureChecker(updatePublicKey.c_str());
     currentFile = 0;
     appDataFolder = getAppDataDir();
     appFolder = getAppDir();
@@ -377,6 +386,11 @@ bool UpdateTask::checkForUpdates(bool emergencyUpdater, bool doNotInstall)
         {
             updateurl = updateurl.replace(updateurl.find("v.txt"),strlen("v.txt"),"vv.txt");
         }
+    }
+
+    if (getenv("MEGA_UPDATE_CHECK_URL"))
+    {
+        updateurl = getenv("MEGA_UPDATE_CHECK_URL");
     }
 
     if (downloadFile((char *)(updateurl.c_str()), updateFile.c_str()))
@@ -706,7 +720,7 @@ void UpdateTask::finalCleanup()
 {
     removeRecursively(updateFolder);
     MEGA_SET_PERMISSIONS;
-    writeVersion();
+    LOG(LOG_LEVEL_INFO, "Version code updated to %d", updateVersion);
 }
 
 bool UpdateTask::setPermissions(const char *path)
@@ -795,7 +809,12 @@ bool UpdateTask::alreadyDownloaded(string relativePath, string fileSignature)
 
 bool UpdateTask::alreadyExists(string absolutePath, string fileSignature)
 {
-    SignatureChecker tmpHash((const char *)UPDATE_PUBLIC_KEY);
+    string updatePublicKey = UPDATE_PUBLIC_KEY;
+    if (getenv("MEGA_UPDATE_PUBLIC_KEY"))
+    {
+        updatePublicKey = getenv("MEGA_UPDATE_PUBLIC_KEY");
+    }
+    SignatureChecker tmpHash(updatePublicKey.c_str());
     char *buffer;
     long fileLength;
     FILE * pFile = mega_fopen(absolutePath.c_str(), "rb");
@@ -855,19 +874,6 @@ int UpdateTask::readVersion()
     fscanf(fp, "%d", &version);
     fclose(fp);
     return version;
-}
-
-void UpdateTask::writeVersion()
-{
-    FILE *fp = mega_fopen((appDataFolder + VERSION_FILE_NAME).c_str(), "w");
-    if (fp == NULL)
-    {
-        return;
-    }
-
-    fprintf(fp, "%d", updateVersion);
-    fclose(fp);
-    LOG(LOG_LEVEL_INFO, "Version code updated to %d", updateVersion);
 }
 
 #ifdef _WIN32

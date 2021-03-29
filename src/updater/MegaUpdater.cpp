@@ -1,7 +1,9 @@
 #ifdef _WIN32
+#include <winsock2.h>
 #include <Windows.h>
 #include <lzexpand.h>
 #include <shlwapi.h>
+#include <shellapi.h>
 #else
 #include <sys/types.h>
 #include <pwd.h>
@@ -215,6 +217,7 @@ using namespace megacmdupdater;
 #include <stdio.h>
 #include <io.h>
 #include <fcntl.h>
+#include <winsock2.h>
 #include <windows.h>
 #include <locale>
 #include <codecvt>
@@ -268,5 +271,15 @@ int main(int argc, char *argv[])
     currentTime = time(NULL);
     cout << "Process finished at " << ctime(&currentTime) << endl;
     unlockExecution();
+
+
+    if (getenv("SLEEP_AFTER_UPDATE"))
+    {
+#ifdef _WIN32
+        Sleep(15*1000);
+#else
+        sleep(15);
+#endif
+    }
     return updated;
 }

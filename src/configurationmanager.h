@@ -28,10 +28,12 @@
 #endif
 
 #define CONFIGURATIONSTOREDBYVERSION -2
+namespace megacmd {
 class ConfigurationManager
 {
 private:
     static std::string configFolder;
+    static bool hasBeenUpdated;
 #if !defined(_WIN32) && defined(LOCK_EX) && defined(LOCK_NB)
     static int fd;
 #endif
@@ -42,6 +44,8 @@ private:
 public:
     static std::map<std::string, sync_struct *> configuredSyncs;
     static std::map<std::string, backup_struct *> configuredBackups;
+
+    static std::recursive_mutex settingsMutex;
 
     static std::string session;
 
@@ -233,9 +237,11 @@ public:
 
     static std::string getConfigFolder();
 
+    static bool getHasBeenUpdated();
+
     static void unloadConfiguration();
 
 };
 
-
+}//end namespace
 #endif // CONFIGURATIONMANAGER_H

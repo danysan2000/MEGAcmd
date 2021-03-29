@@ -21,8 +21,9 @@
 #include "megacmdutils.h"
 
 using namespace mega;
-using namespace std;
 
+
+namespace megacmd {
 #ifdef ENABLE_CHAT
 void MegaCmdGlobalListener::onChatsUpdate(MegaApi*, MegaTextChatList*)
 {
@@ -67,6 +68,8 @@ MegaCmdGlobalListener::MegaCmdGlobalListener(MegaCMDLogger *logger, MegaCmdSandb
 {
     this->loggerCMD = logger;
     this->sandboxCMD = sandboxCMD;
+
+    ongoing = false;
 }
 
 void MegaCmdGlobalListener::onNodesUpdate(MegaApi *api, MegaNodeList *nodes)
@@ -164,9 +167,57 @@ void MegaCmdGlobalListener::onEvent(MegaApi *api, MegaEvent *event)
 {
     if (event->getType() == MegaEvent::EVENT_ACCOUNT_BLOCKED)
     {
-        sandboxCMD->accounthasbeenblocked = true;
-        LOG_err << "Received event account blocked: " << event->getText();
-        sandboxCMD->reasonblocked = event->getText();
+        if (getBlocked() == event->getNumber())
+        {
+            LOG_debug << " receivied EVENT_ACCOUNT_BLOCKED: number = " << event->getNumber();
+            return;
+        }
+        setBlocked(event->getNumber()); //this should be true always
+
+        switch (event->getNumber())
+        {
+        case MegaApi::ACCOUNT_BLOCKED_VERIFICATION_EMAIL:
+        {
+            sandboxCMD->setReasonblocked( "Your account has been temporarily suspended for your safety. "
+                                        "Please verify your email and follow its steps to unlock your account.");
+            break;
+        }
+        case MegaApi::ACCOUNT_BLOCKED_VERIFICATION_SMS:
+        {
+            if (!ongoing)
+            {
+                ongoing = true;
+
+                sandboxCMD->setReasonPendingPromise();
+
+                api->getSessionTransferURL("", new MegaCmdListenerFuncExecuter(
+                                               [this](mega::MegaApi* api, mega::MegaRequest *request, mega::MegaError *e)
+                {
+                    string reason("Your account has been suspended temporarily due to potential abuse. "
+                    "Please verify your phone number to unlock your account." );
+                    if (e->getValue() == MegaError::API_OK)
+                    {
+                       reason.append(" Open the following link: ");
+                       reason.append(request->getLink());
+                    }
+
+                    sandboxCMD->setPromisedReasonblocked(reason);
+                    ongoing = false;
+                },true));
+            }
+            break;
+        }
+        case MegaApi::ACCOUNT_BLOCKED_SUBUSER_DISABLED:
+        {
+            sandboxCMD->setReasonblocked("Your account has been disabled by your administrator. Please contact your business account administrator for further details.");
+            break;
+        }
+        default:
+        {
+            sandboxCMD->setReasonblocked(event->getText());
+            LOG_err << "Received event account blocked: " << event->getText();
+        }
+        }
     }
     else if (event->getType() == MegaEvent::EVENT_STORAGE)
     {
@@ -178,32 +229,79 @@ void MegaCmdGlobalListener::onEvent(MegaApi *api, MegaEvent *event)
         {
             int previousStatus = sandboxCMD->storageStatus;
             sandboxCMD->storageStatus = event->getNumber();
-            if (sandboxCMD->storageStatus == MegaApi::STORAGE_STATE_RED || sandboxCMD->storageStatus == MegaApi::STORAGE_STATE_ORANGE)
+            if (sandboxCMD->storageStatus == MegaApi::STORAGE_STATE_PAYWALL || sandboxCMD->storageStatus == MegaApi::STORAGE_STATE_RED || sandboxCMD->storageStatus == MegaApi::STORAGE_STATE_ORANGE)
             {
                 ConfigurationManager::savePropertyValue("ask4storage",true);
 
                 if (previousStatus < sandboxCMD->storageStatus)
                 {
-                    string s;
-                    if (sandboxCMD->storageStatus == MegaApi::STORAGE_STATE_RED)
+                    if (sandboxCMD->storageStatus == MegaApi::STORAGE_STATE_PAYWALL)
                     {
-                        s+= "You have exeeded your available storage.\n";
+                        api->getUserData(new MegaCmdListenerFuncExecuter(
+                                        [this](mega::MegaApi* api, mega::MegaRequest *request, mega::MegaError *e)
+                        {
+                            if (e->getValue() == MegaError::API_OK)
+                            {
+                                std::unique_ptr<char[]> myEmail(api->getMyEmail());
+                                std::unique_ptr<MegaIntegerList> warningsList(api->getOverquotaWarningsTs());
+                                std::string s;
+                                s += "We have contacted you by email to " + string(myEmail.get()) + " on ";
+                                s += getReadableTime(warningsList->get(0),"%b %e %Y");
+                                if (warningsList->size() > 1)
+                                {
+                                    for (int i = 1; i < warningsList->size() - 1; i++)
+                                    {
+                                        s += ", " + getReadableTime(warningsList->get(i),"%b %e %Y");
+                                    }
+                                    s += " and " + getReadableTime(warningsList->get(warningsList->size() - 1),"%b %e %Y");
+                                }
+                                std::unique_ptr<MegaNode> rootNode(api->getRootNode());
+                                long long totalFiles = 0;
+                                long long totalFolders = 0;
+                                getNumFolderFiles(rootNode.get(),api,&totalFiles,&totalFolders);
+                                s += ", but you still have " + std::to_string(totalFiles) + " files taking up " + sizeToText(sandboxCMD->receivedStorageSum);
+                                s += " in your MEGA account, which requires you to upgrade your account.\n\n";
+                                long long daysLeft = (api->getOverquotaDeadlineTs() - m_time(NULL)) / 86400;
+                                if (daysLeft > 0)
+                                {
+                                     s += "You have " + std::to_string(daysLeft) + " days left to upgrade. ";
+                                     s += "After that, your data is subject to deletion.\n";
+                                }
+                                else
+                                {
+                                     s += "You must act immediately to save your data. From now on, your data is subject to deletion.\n";
+                                }
+                                s += "See \"help --upgrade\" for further details.";
+                                broadcastMessage(s);
+                            }
+                        },true));
                     }
                     else
                     {
-                        s+= "You are running out of available storage.\n";
+                        string s;
+                        if (sandboxCMD->storageStatus == MegaApi::STORAGE_STATE_RED)
+                        {
+                            s+= "You have exeeded your available storage.\n";
+                        }
+                        else
+                        {
+                            s+= "You are running out of available storage.\n";
+                        }
+                        s+="You can change your account plan to increase your quota limit.\nSee \"help --upgrade\" for further details";
+                        broadcastMessage(s);
                     }
-                    s+="You can change your account plan to increase your quota limit.\nSee \"help --upgrade\" for further details";
-                    broadcastMessage(s);
                 }
             }
             else
             {
                 ConfigurationManager::savePropertyValue("ask4storage",false);
             }
-
         }
         LOG_info << "Received event storage changed: " << event->getNumber();
+    }
+    else if (event->getType() == MegaEvent::EVENT_STORAGE_SUM_CHANGED)
+    {
+        sandboxCMD->receivedStorageSum = event->getNumber();
     }
 }
 
@@ -222,6 +320,34 @@ void MegaCmdMegaListener::onRequestFinish(MegaApi *api, MegaRequest *request, Me
     {
         LOG_debug << "Session closed";
         sandboxCMD->resetSandBox();
+        reset();
+    }
+    else if (request->getType() == MegaRequest::TYPE_WHY_AM_I_BLOCKED)
+    {
+        if (e->getErrorCode() == MegaError::API_OK
+                && request->getNumber() == MegaApi::ACCOUNT_NOT_BLOCKED)
+        {
+            if (getBlocked())
+            {
+                unblock();
+            }
+        }
+
+    }
+    else if (request->getType() == MegaRequest::TYPE_ACCOUNT_DETAILS)
+    {
+        if (e->getErrorCode() != MegaError::API_OK)
+        {
+            return;
+        }
+
+        bool storage = (request->getNumDetails() & 0x01) != 0;
+
+        if (storage)
+        {
+            unique_ptr<MegaAccountDetails> details(request->getMegaAccountDetails());
+            sandboxCMD->totalStorage = details->getStorageMax();
+        }
     }
     else if (e && ( e->getErrorCode() == MegaError::API_ESID ))
     {
@@ -327,36 +453,38 @@ void MegaCmdListener::doOnRequestFinish(MegaApi* api, MegaRequest *request, Mega
             int i = 0;
 #ifdef ENABLE_SYNC
 
+            std::shared_ptr<std::lock_guard<std::recursive_mutex>> g = std::make_shared<std::lock_guard<std::recursive_mutex>>(ConfigurationManager::settingsMutex);
+            // shared pointed lock_guard. will be freed when all resuming are complete
+
             for (itr = ConfigurationManager::configuredSyncs.begin(); itr != ConfigurationManager::configuredSyncs.end(); ++itr, i++)
             {
                 sync_struct *oldsync = ((sync_struct*)( *itr ).second );
 
-                MegaCmdListener *megaCmdListener = new MegaCmdListener(api, NULL);
                 MegaNode * node = api->getNodeByHandle(oldsync->handle);
-                api->resumeSync(oldsync->localpath.c_str(), node, oldsync->fingerprint, megaCmdListener);
-                megaCmdListener->wait();
-                if ( megaCmdListener->getError()->getErrorCode() == MegaError::API_OK )
+                api->resumeSync(oldsync->localpath.c_str(), node, oldsync->fingerprint, new MegaCmdListenerFuncExecuter([g, oldsync, node](mega::MegaApi* api, mega::MegaRequest *request, mega::MegaError *e)
                 {
-                    oldsync->fingerprint = megaCmdListener->getRequest()->getNumber();
-                    oldsync->active = true;
-                    oldsync->loadedok = true;
+                    std::unique_ptr<char []>nodepath (api->getNodePath(node));
 
-                    char *nodepath = api->getNodePath(node);
-                    LOG_info << "Loaded sync: " << oldsync->localpath << " to " << nodepath;
-                    delete []nodepath;
-                }
-                else
-                {
-                    oldsync->loadedok = false;
-                    oldsync->active = false;
+                    if ( e->getErrorCode() == MegaError::API_OK )
+                    {
+                        if (request->getNumber())
+                        {
+                            oldsync->fingerprint = request->getNumber();
+                        }
+                        oldsync->active = true;
+                        oldsync->loadedok = true;
 
-                    char *nodepath = api->getNodePath(node);
-                    LOG_err << "Failed to resume sync: " << oldsync->localpath << " to " << nodepath;
-                    delete []nodepath;
-                }
+                        LOG_info << "Loaded sync: " << oldsync->localpath << " to " << nodepath.get();
+                    }
+                    else
+                    {
+                        oldsync->loadedok = false;
+                        oldsync->active = false;
 
-                delete megaCmdListener;
-                delete node;
+                        LOG_err << "Failed to resume sync: " << oldsync->localpath << " to " << nodepath.get();
+                    }
+                    delete node;
+                }, true));
             }
 #endif
             informProgressUpdate(PROGRESS_COMPLETE, request->getTotalBytes(), this->clientID, "Fetching nodes");
@@ -902,7 +1030,6 @@ MegaCmdGlobalTransferListener::MegaCmdGlobalTransferListener(MegaApi *megaApi, M
     this->megaApi = megaApi;
     this->sandboxCMD = sandboxCMD;
     this->listener = parent;
-    completedTransfersMutex.init(false);
 };
 
 void MegaCmdGlobalTransferListener::onTransferFinish(MegaApi* api, MegaTransfer *transfer, MegaError* error)
@@ -979,3 +1106,4 @@ bool MegaCmdCatTransferListener::onTransferData(MegaApi *api, MegaTransfer *tran
 
     return true;
 }
+} //end namespace
